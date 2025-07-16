@@ -5,7 +5,6 @@ coocc_wt2 <- function(x.cont, x.cat, x.disc, weights = NULL, bins = NULL, bin_me
   
   bin_method <- match.arg(bin_method, choices = c("equalwidth", "weighted"))
   if (is.null(weights)) weights <- rep(1, nrow(x.cont))
-  #x.disc <- generate_binned_cont(as.data.frame(x.cont), bins = bins, bin_method = bin_method)
   
   wt <- rep(0, ncol(x.cont))
   
