@@ -7,7 +7,6 @@ coocc_dis<-function(x.cat, x.cont, x.disc, only.cat = FALSE, js = FALSE, bins = 
   if (only.cat == TRUE) {
     df <- x.cat
   } else {
-  #  x.disc <- generate_binned_cont(as.data.frame(x.cont), bins = bins, bin_method = bin_method)
     df <- cbind(x.cat, x.disc)}
   
   delta <- vector("list", ncol(df))
@@ -33,12 +32,6 @@ coocc_dis<-function(x.cat, x.cont, x.disc, only.cat = FALSE, js = FALSE, bins = 
   
   for (k in 1:ncol(df)){
     tmp_col <- df[,k]
-    
-    ##########################
-    #for (i in 1:nrow(df)){
-    #  for (j in 1:nrow(df)){
-    #    dist_mat[i,j] <- dist_mat[i,j] + delta[[k]][as.character(tmp_col[i]), as.character(tmp_col[j])]^2}}}
-    ##########################
     
     for (i in 1:(nrow(df) - 1)) { 
       for (j in (i + 1):nrow(df)) {
