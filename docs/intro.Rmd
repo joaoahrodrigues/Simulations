@@ -1,0 +1,282 @@
+
+---
+title: "Intro"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Intro}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+# Global knitr options
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+# Load your functions
+source("/Users/joaorodrigues/Desktop/Experiments/fun.R")
+
+# Load all required packages
+libs <- c(
+  "robustbase","cluster","ggplot2","factoextra","clValid","fpc","gower",
+  "tidyverse","haven","dplyr","cvTools","boot","textmineR","caret","proxy",
+  "Matrix","expm","FNN","Rlof","dbscan","kmed","data.table","stringr",
+  "parallel","gridExtra","pROC","reshape2","mvtnorm","MASS","purrr","knitr",
+  "gt","isotree","Rcpp","memoise","profvis","rrcov","FactoMineR","philentropy",
+  "furrr","tibble","Hmisc","klaR","progressr","future","patchwork"
+)
+
+invisible(lapply(libs, function(pkg){
+  if(!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+  library(pkg, character.only = TRUE)
+}))
+```
+
+## Dataset Creation
+
+```{r dataset creation}
+
+set.seed(1)
+
+df1 <- generate_dataset(n = 1000, d = 2, k = 2, m = 2, imbalance_ratio = 9)
+
+head(df1)
+
+df1 <- df1 %>%
+      mutate(across(starts_with("Cat_"), as.factor)) %>%
+      mutate(Class = as.factor(Class))
+
+summary(df1)
+
+ggplot(df1, aes(x = Cont_1, y = Cont_2, color = factor(Class))) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  labs(title = "Separated Means",
+       x = "X1", y = "X2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+df2 <- generate_dataset_new(n = 1000, d = 2, k = 2, m = 2, imbalance_ratio = 9)
+
+ggplot(df2, aes(x = Cont_1, y = Cont_2, color = factor(Class))) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("0" = "blue", "1" = "red")) +
+  labs(title = "Centered Mean with Exclusion Zone",
+       x = "X1", y = "X2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+## REF Comparison
+
+```{r binning}
+
+d=3; k=3; m=6; n=500;
+
+df <- generate_dataset(n = 500, d = 3, k = 3, m = 6, imbalance_ratio = 9)
+
+df <- df %>%
+      mutate(across(starts_with("Cat_"), as.factor)) %>%
+      mutate(Class = as.factor(Class))
+
+Xcat <- df[,1:k]
+Xcont <- df[,(k+1):(d+k)]
+
+numerical_vars <- colnames(df)[grepl("Cont_", colnames(df))]
+categorical_vars <- colnames(df)[grepl("Cat_", colnames(df))]
+categorical_vars <- c(categorical_vars, "Class")
+categorical_vars_no_class <- setdiff(categorical_vars, "Class")
+
+# Binning 1st numerical variable
+bins_eq <- generate_binned_cont(Xcont, bins = 20, bin_method = "equalwidth")[, 1]
+bins_ww <- generate_binned_cont(Xcont, bins = 20, bin_method = "weighted")[, 1]
+
+# Plot
+ggplot(data.frame(bin = bins_eq), aes(x = factor(bin))) +
+  geom_bar(fill = "steelblue", alpha = 0.7, color = "white") +
+  labs(title = "Equalwidth binning", x = "Bin number (1–20)",
+    y = "Count") + theme_minimal()
+
+ggplot(data.frame(bin = bins_ww), aes(x = factor(bin))) +
+  geom_bar(fill = "steelblue", alpha = 0.7, color = "white") +
+  labs(title = "Weighted binning", x = "Bin number (1–20)",
+    y = "Count") + theme_minimal()
+
+```
+    
+## Reference element - numerical
+    
+```{r ref num}
+
+# Mean
+colMeans(Xcont) 
+
+# Median
+matrixStats::colMedians(as.matrix(Xcont)) 
+
+# FastMCD
+CovMcd(Xcont)@center 
+
+```
+    
+## Reference element - categorical
+
+```{r ref cat}
+
+# Shared Mode
+df %>% dplyr::count(dplyr::across(all_of(categorical_vars_no_class)), 
+        sort = TRUE) %>% dplyr::slice(1) %>% dplyr::select(-n) 
+
+# MCA
+Xcat_clean <- Xcat[, sapply(Xcat, function(x) length(unique(x)) > 1), drop = FALSE]
+Xcat_clean <- Xcat_clean[, !duplicated(as.list(Xcat_clean)), drop = FALSE]
+mca_result <- FactoMineR::MCA(Xcat_clean, graph = FALSE)
+mca_coord <- mca_result$ind$coord
+centroid <- matrixStats::colMedians(mca_coord)
+idx <- which.min(apply(mca_coord, 1, function(row) sum((row - centroid)^2)))
+df[idx, categorical_vars_no_class]
+
+```
+
+## Reference element using Gower's distance
+
+```{r ref with gower}
+
+reference_cat <- df %>% dplyr::count(dplyr::across(all_of(categorical_vars_no_class)), 
+        sort = TRUE) %>% dplyr::slice(1) %>% dplyr::select(-n) 
+
+reference_num <- CovMcd(Xcont)@center 
+
+reference <- tibble(
+      !!!setNames(reference_cat[1,], categorical_vars_no_class),
+      !!!setNames(reference_num, numerical_vars))
+
+reference
+    
+for (col in categorical_vars_no_class) {
+  reference[[col]] <- factor(reference[[col]], levels = levels(df[[col]]))
+  df[[col]] <- factor(df[[col]], levels = levels(df[[col]]))}
+    
+df_with_ref <- rbind(df[, !names(df) %in% "Class"], reference)  
+
+nrow(df_with_ref)
+
+gower_mat <- NULL
+gower_mat <- as.matrix(distmix(df_with_ref, method = "gower", idnum = (k+1):(d+k), idcat = 1:k))
+
+gower_mat[(1:5),(1:5)]
+
+dist_to_ref <- as.numeric(gower_mat[nrow(gower_mat), 1:(nrow(gower_mat)-1)])
+
+transf_dist <- as.numeric(Farness(dist_to_ref))
+
+unique(round(dist_to_ref, 3))
+
+# The contribution from categorical variables jumps in discrete steps, 
+# and the numeric contributions are often scaled small (since they’re divided
+# by range and then averaged). When everything is summed and averaged, the 
+# small numerical differences are "absorbed" by the categorical jumps, and when
+# rounded multiple total distances can coincide. This is why we have 3 "jumps"
+# in the next plot
+
+plot_data <- data.frame(dist_to_ref  = dist_to_ref, transf_dist = transf_dist)
+
+ggplot(plot_data, aes(x = dist_to_ref, y = transf_dist)) +
+  geom_point(color = "steelblue", alpha = 0.7, size = 2) +
+  labs(title = "Scatter plot",
+       x = "Distance to reference", y = "Transformed distance (Farness)") +
+  theme_minimal()
+
+threshold <- 0.9
+outlier_labels <- rep(0, n)
+outlier_labels[which(df$Class == 1)] <- 1
+predicted_outliers <- ifelse(transf_dist > threshold, 1, 0)
+
+which(predicted_outliers == 1)
+
+TP <- sum(outlier_labels == 1 & predicted_outliers == 1)
+TN <- sum(outlier_labels == 0 & predicted_outliers == 0)
+FP <- sum(outlier_labels == 0 & predicted_outliers == 1)
+FN <- sum(outlier_labels == 1 & predicted_outliers == 0)
+
+cat("TP:", TP, "; TN:", TN, "; FP:", FP, "; FN:", FN,  "\n")
+
+# Evaluation Metrics
+epsilon <- 1e-8
+recall_1 <- TP / (TP + FN + epsilon)
+recall_0 <- TN / (TN + FP + epsilon)
+precision_1 <- TP / (TP + FP + epsilon)
+precision_0 <- TN / (TN + FN + epsilon)
+
+cat("Re(1):", recall_1, "; Re(0):", recall_0, "; Pr(1):", precision_1, "; Pr(0):", precision_0, "\n")
+
+f1_score <- (2 * recall_1 * precision_1) / (recall_1 + precision_1 + epsilon)
+
+# F1 Score in REF + Gower
+f1_score 
+
+```
+
+## Two-Stage Quantile Distance using Gower's distance
+
+```{r tsqd with gower}
+
+gower_mat <- NULL
+gower_mat <- as.matrix(distmix(df[,1:(d+k)], method = "gower", idnum = (k+1):(d+k), idcat = 1:k))
+
+gower_mat[(1:5),(1:5)]
+
+vec <- apply(gower_mat, 1, quantile, probs = 0.9)
+
+transf_dist <- as.numeric(Farness(vec))
+
+threshold <- 0.9
+outlier_labels <- rep(0, n)
+outlier_labels[which(df$Class == 1)] <- 1
+predicted_outliers <- ifelse(transf_dist > threshold, 1, 0)
+
+which(predicted_outliers == 1)
+
+TP <- sum(outlier_labels == 1 & predicted_outliers == 1)
+TN <- sum(outlier_labels == 0 & predicted_outliers == 0)
+FP <- sum(outlier_labels == 0 & predicted_outliers == 1)
+FN <- sum(outlier_labels == 1 & predicted_outliers == 0)
+
+cat("TP:", TP, "; TN:", TN, "; FP:", FP, "; FN:", FN,  "\n")
+
+# Evaluation Metrics
+epsilon <- 1e-8
+recall_1 <- TP / (TP + FN + epsilon)
+recall_0 <- TN / (TN + FP + epsilon)
+precision_1 <- TP / (TP + FP + epsilon)
+precision_0 <- TN / (TN + FN + epsilon)
+
+cat("Re(1):", recall_1, "; Re(0):", recall_0, "; Pr(1):", precision_1, "; Pr(0):", precision_0, "\n")
+
+f1_score <- (2 * recall_1 * precision_1) / (recall_1 + precision_1 + epsilon)
+
+# F1 Score in TSQD + Gower
+f1_score 
+
+```
+
+## Ahmad Distance Computation
+
+```{r ahmad computation}
+
+aux_cond <- Ahmad.aux(x.cont = df[, numerical_vars], x.cat = df[, categorical_vars_no_class],
+        type = "Norm", bins = 20, only.categ = FALSE, js = FALSE, bin_method = "weighted")
+
+aux_cond$dist[(1:5),(1:5)]
+
+aux_rb <- AhmadMah.aux(x.cont = df[, numerical_vars], x.cat = df[, categorical_vars_no_class],
+        type = "Norm", bins = 20, only.categ = FALSE, js = FALSE, bin_method = "weighted", method_mah = "rb")
+
+aux_rb$dist[(1:5),(1:5)]
+
+```
+
+
