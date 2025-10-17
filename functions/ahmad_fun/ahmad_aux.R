@@ -11,16 +11,17 @@ Ahmad.aux <- function(x.cont, x.cat, type = "Norm", bins = NULL, only.categ = FA
     process <- caret::preProcess(as.data.frame(x.cont), method = c("range"))
     x.conts <- predict(process, as.data.frame(x.cont))
     wt <- coocc_wt2(x.conts, x.cat, x.disc, bins = bins, bin_method = bin_method)
-    newdf <- sweep(x.cont, 2, wt^2, function(x, y) x * sqrt(y))
+    newdf <- sweep(x.conts, 2, wt^2, function(x, y) x * sqrt(y))
     d.cont <- as.matrix(cluster::daisy(newdf, metric = "euclidean"))^2
 
   } else if (type == "Norm") {
-    wt <- coocc_wt2(scale(x.cont), x.cat, x.disc, bins = bins, bin_method = bin_method)
-    newdf <- sweep(x.cont, 2, wt^2, function(x, y) x * sqrt(y))
+    x.conts <- scale(x.cont)
+    wt <- coocc_wt2(x.conts, x.cat, x.disc, bins = bins, bin_method = bin_method)
+    newdf <- sweep(x.conts, 2, wt^2, function(x, y) x * sqrt(y))
     d.cont <- as.matrix(cluster::daisy(newdf, metric = "euclidean"))^2
 
   } else if (type == "None") {
-    wt <- rep(1, ncol(x.cont))
+    wt <- coocc_wt2(x.cont, x.cat, x.disc, bins = bins, bin_method = bin_method)
     newdf <- sweep(x.cont, 2, wt^2, function(x, y) x * sqrt(y))
     d.cont <- as.matrix(cluster::daisy(newdf, metric = "euclidean"))^2}
 
